@@ -1,0 +1,259 @@
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const teacherForm = document.getElementById('teacherForm');
+        const reviewForm = document.getElementById('reviewForm');
+        const teachersList = document.getElementById('teachersList');
+        const existingTeacherSelect = document.getElementById('existingTeacher');
+        const tabs = document.querySelectorAll('.tab');
+        const tabContents = document.querySelectorAll('.tab-content');
+        
+        const API_URL = window.location.origin + '/api';
+        
+        // Load teachers from API
+        loadTeachers();
+        
+        // Tab functionality
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                const tabId = tab.getAttribute('data-tab');
+                
+                // Update active tab
+                tabs.forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                
+                // Update active content
+                tabContents.forEach(content => {
+                    content.classList.remove('active');
+                    if (content.id === tabId) {
+                        content.classList.add('active');
+                    }
+                });
+            });
+        });
+        
+        // Handle new teacher form submission
+        teacherForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const name = document.getElementById('teacherName').value;
+            const description = document.getElementById('teacherDescription').value;
+            const rating = document.querySelector('input[name="rating"]:checked');
+            const reason = document.getElementById('ratingReason').value;
+            
+            if (!rating) {
+                alert('Please select a rating');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_URL}/teachers`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        name: name,
+                        description: description,
+                        rating: parseInt(rating.value),
+                        reason: reason
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (!response.ok) {
+                    if (result.error === 'Teacher already exists') {
+                        // Highlight the existing teacher
+                        highlightTeacher(result.teacherId);
+                        alert('This teacher already exists. Please use the "Add Review" tab to add another review.');
+                    } else {
+                        alert('Error: ' + result.error);
+                    }
+                    return;
+                }
+                
+                // Re-render the list
+                loadTeachers();
+                updateTeacherSelect();
+                
+                // Reset form
+                teacherForm.reset();
+                
+                // Switch to add review tab
+                tabs[1].click();
+                
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Error adding teacher. Please try again.');
+            }
+        });
+        
+        // Handle review form submission
+        reviewForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const teacherId = existingTeacherSelect.value;
+            const rating = document.querySelector('input[name="review-rating"]:checked');
+            const reason = document.getElementById('reviewReason').value;
+            
+            if (!rating) {
+                alert('Please select a rating');
+                return;
+            }
+            
+            if (!teacherId) {
+                alert('Please select a teacher');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_URL}/teachers/${teacherId}/reviews`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        rating: parseInt(rating.value),
+                        reason: reason
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (!response.ok) {
+                    alert('Error: ' + result.error);
+                    return;
+                }
+                
+                // Re-render the list
+                loadTeachers();
+                
+                // Reset form
+                reviewForm.reset();
+                
+                alert('Review added successfully!');
+                
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Error adding review. Please try again.');
+            }
+        });
+        
+        async function loadTeachers() {
+            try {
+                const response = await fetch(`${API_URL}/teachers`);
+                const teachers = await response.json();
+                renderTeachers(teachers);
+                updateTeacherSelect(teachers);
+            } catch (error) {
+                console.error('Error loading teachers:', error);
+                teachersList.innerHTML = `
+                    <div class="empty-state">
+                        <i>⚠️</i>
+                        <h3>Error loading teachers</h3>
+                        <p>Please check if the server is running</p>
+                    </div>
+                `;
+            }
+        }
+        
+        function renderTeachers(teachers) {
+            if (teachers.length === 0) {
+                teachersList.innerHTML = `
+                    <div class="empty-state">
+                        <i>★</i>
+                        <h3>No teachers added yet</h3>
+                        <p>Add your first teacher using the form on the left</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            // Generate HTML for each teacher
+            teachersList.innerHTML = teachers.map(teacher => `
+                <div class="teacher-card" id="teacher-${teacher.id}">
+                    <div class="teacher-header">
+                        <div class="teacher-name">${teacher.name}</div>
+                        <div class="teacher-rating">
+                            <div class="rating-stars">${getStarRating(teacher.avgRating)}</div>
+                            <div class="rating-value">${teacher.avgRating}/5</div>
+                        </div>
+                    </div>
+                    <div class="teacher-description">${teacher.description}</div>
+                    <div class="reviews-count">Based on ${teacher.reviews.length} review(s)</div>
+                    
+                    <button class="toggle-reviews" data-teacher-id="${teacher.id}">Show Reviews</button>
+                    
+                    <div class="reviews-container" id="reviews-${teacher.id}">
+                        ${teacher.reviews.map(review => `
+                            <div class="teacher-reason">
+                                <div class="review-header">
+                                    <div class="rating-stars">${'★'.repeat(review.rating)}${'☆'.repeat(5-review.rating)}</div>
+                                    <div class="review-date">${review.date}</div>
+                                </div>
+                                "${review.reason}"
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `).join('');
+            
+            // Add event listeners to toggle buttons
+            document.querySelectorAll('.toggle-reviews').forEach(button => {
+                button.addEventListener('click', function() {
+                    const teacherId = this.getAttribute('data-teacher-id');
+                    const reviewsContainer = document.getElementById(`reviews-${teacherId}`);
+                    const reviews = reviewsContainer.querySelectorAll('.teacher-reason');
+                    
+                    // Toggle visibility of reviews
+                    reviews.forEach(review => {
+                        review.classList.toggle('show');
+                    });
+                    
+                    // Update button text
+                    this.textContent = reviews[0].classList.contains('show') ? 'Hide Reviews' : 'Show Reviews';
+                });
+            });
+        }
+        
+        function updateTeacherSelect(teachers) {
+            // Clear existing options
+            existingTeacherSelect.innerHTML = '<option value="">Select a teacher</option>';
+            
+            // Add teachers to dropdown
+            teachers.forEach(teacher => {
+                const option = document.createElement('option');
+                option.value = teacher.id;
+                option.textContent = `${teacher.name} (Current: ${teacher.avgRating}/5)`;
+                
+                existingTeacherSelect.appendChild(option);
+            });
+        }
+        
+        function getStarRating(avgRating) {
+            const fullStars = Math.floor(avgRating);
+            const halfStar = avgRating % 1 >= 0.5;
+            const emptyStars = 5 - fullStars - (halfStar ? 1 : 0);
+            
+            return '★'.repeat(fullStars) + (halfStar ? '½' : '') + '☆'.repeat(emptyStars);
+        }
+        
+        function highlightTeacher(teacherId) {
+            // Find the teacher card
+            const teacherCard = document.getElementById(`teacher-${teacherId}`);
+            
+            if (teacherCard) {
+                // Add highlight class
+                teacherCard.classList.add('highlight');
+                
+                // Scroll to the teacher card
+                teacherCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                
+                // Remove highlight after animation completes
+                setTimeout(() => {
+                    teacherCard.classList.remove('highlight');
+                }, 2000);
+            }
+        }
+    });
+</script>
